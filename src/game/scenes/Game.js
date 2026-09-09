@@ -9,57 +9,62 @@ export class Game extends Scene
     constructor ()
     {
         super('Game');
-        this.canJump = true;
-        this.canDoubleJump = false;
+        this.jumpsUsed = 0;
         this.playerStart = null;
         this.npcs = [];
         this.enemies = [];
+        this.groundSprites = [];
+        this.playerBody = null;
     }
 
     create ()
     {
-        const currentLevel = LEVELS[0];
+        const currentLevel = LEVELS[this.registry.get('currentLevelIndex') || 0];
         this.cameras.main.setBackgroundColor(0x00ff00);
 
         const { playerStart, exit, platforms } = currentLevel;
 
         this.playerStart = playerStart;
 
-        const ground = this.physics.add.staticGroup();
-        platforms.forEach(plat => {
-            ground.create(plat.x, plat.y).setSize(plat.width, plat.height).refreshBody();
-        });
-
-        this.player = this.physics.add.rectangle(
-            playerStart.x, playerStart.y, 30, 30, 0x0000ff
-        );
-
-        this.player.setCollideWorldBounds(true);
+        this.player = this.add.rectangle(playerStart.x, playerStart.y, 30, 30, 0x0000ff);
+        this.physics.world.enable(this.player);
+        this.playerBody = this.player.body;
+        
+        if (this.playerBody) {
+            this.playerBody.setCollideWorldBounds(true);
+        }
 
         this.speed = 200;
 
         this.cursors = this.input.keyboard.createCursorKeys();
-        this.keyA = this.input.keyboard.addKey(65); // A
-        this.keyD = this.input.keyboard.addKey(68); // D
+        this.keyA = this.input.keyboard.addKey(65);
+        this.keyD = this.input.keyboard.addKey(68);
         this.spaceKey = this.input.keyboard.addKey(32);
-        this.keyF = this.input.keyboard.addKey(70); // F
+        this.keyF = this.input.keyboard.addKey(70);
 
-        this.physics.add.collider(this.player, ground, () => {
+        this.groundSprites = [];
+        platforms.forEach(plat => {
+            const sprite = this.add.rectangle(plat.x, plat.y, plat.width, plat.height, 0x00ff00);
+            this.physics.world.enable(sprite);
+            if (sprite.body) {
+                sprite.body.allowGravity = false;
+                sprite.body.immovable = true;
+            }
+            this.groundSprites.push(sprite);
+        });
+        this.physics.add.collider(this.player, this.groundSprites, () => {
             this.canJump = true;
             this.canDoubleJump = false;
         });
 
-        // Create NPCs from level data
         const levelNpcs = currentLevel.npcs;
         this.npcs = [];
         this.npcGraphics = [];
 
         levelNpcs.forEach(npcData => {
-            // Always derive rescued state from current game state
             const rescuedIds = getGameState().levelEntities.rescuedNpcIds;
             const alreadyRescued = rescuedIds.includes(npcData.id);
 
-            // Create NPC graphics
             const graphic = this.add.graphics();
             if (alreadyRescued) {
                 graphic.fillStyle(0x888888, 1);
@@ -68,7 +73,6 @@ export class Game extends Scene
                 graphic.fillStyle(0xffd700, 1);
                 graphic.fillRect(npcData.x - 15, npcData.y - 15, 30, 30);
             }
-            graphic.refreshBody();
 
             this.npcGraphics.push(graphic);
 
@@ -79,20 +83,19 @@ export class Game extends Scene
             });
         });
 
-        // Create enemies from level data
         const levelEnemies = currentLevel.enemies;
         this.enemies = [];
 
         levelEnemies.forEach(enemyData => {
-            // Check if enemy was already defeated
             const alreadyDefeated = getGameState().levelEntities.defeatedEnemyIds.includes(enemyData.id);
 
-            // Create physics sprite for enemy
-            const enemy = this.physics.add.rectangle(
-                enemyData.x, enemyData.y, 30, 30,
-                alreadyDefeated ? 0x888888 : 0xff0000
-            );
-            enemy.defeated = alreadyDefeated; // custom property
+            const enemy = this.add.rectangle(enemyData.x, enemyData.y, 30, 30,
+                alreadyDefeated ? 0x888888 : 0xff0000);
+            enemy.defeated = alreadyDefeated;
+            this.physics.world.enable(enemy);
+            if (enemy.body) {
+                enemy.body.setCollideWorldBounds(true);
+            }
 
             this.enemies.push(enemy);
         });
@@ -101,51 +104,166 @@ export class Game extends Scene
             this.handleEnemyCollision(enemy);
         });
 
+        this.physics.add.collider(this.enemies, this.groundSprites);
+
+        this.exit = this.add.rectangle(currentLevel.exit.x, currentLevel.exit.y, 40, 80, 0xffd700);
+        this.physics.world.enable(this.exit);
+        if (this.exit.body) {
+            this.exit.body.allowGravity = false;
+            this.exit.body.immovable = true;
+        }
+        this.physics.add.overlap(this.player, this.exit, () => {
+            this.handleExitReached();
+        });
+
+        this.timerText = this.add.text(16, 16, '', {
+            fontFamily: 'Arial', fontSize: 16, color: '#ffffff'
+        });
+
+        this.scoreText = this.add.text(16, 38, '', {
+            fontFamily: 'Arial', fontSize: 16, color: '#ffffff'
+        });
+
+        this.livesText = this.add.text(this.cameras.main.width - 150, 16, '', {
+            fontFamily: 'Arial', fontSize: 16, color: '#ffffff'
+        });
+
+        this.levelText = this.add.text(this.cameras.main.width - 150, 38, '', {
+            fontFamily: 'Arial', fontSize: 16, color: '#ffffff'
+        });
+
         this.spaceJustReleased = true;
         this.fJustReleased = true;
     }
 
     handleEnemyCollision (enemy)
     {
-        // Cannot collide with already defeated enemy
         const defeatedIds = getGameState().levelEntities.defeatedEnemyIds;
         if (defeatedIds.includes(enemy.id)) {
             return;
         }
 
-        // Check if defeated by jumping on top:
-        // Player is falling (velocityY > 0) and touching the enemy from above
-        const isDefeat = this.player.body.touching.down && this.player.velocityY > 0;
+        const isDefeat = this.playerBody.touching.down && this.playerBody.velocityY > 0 && enemy.body.touching.up;
 
         if (isDefeat) {
-            // Defeat the enemy
             this.defeatEnemy(enemy.id);
         } else {
-            // Take damage (touched side or bottom without jumping)
             this.takeDamage();
         }
     }
 
     defeatEnemy (enemyId)
     {
-        // Record defeat in game state
         const currentState = getGameState();
         const defeatedIds = currentState.levelEntities.defeatedEnemyIds;
         defeatedIds.push(enemyId);
-        updateGameState({ gameState: { ...currentState, levelEntities: { ...currentState.levelEntities, defeatedEnemyIds: defeatedIds } } });
+        
+        updateGameState({
+            levelEntities: {
+                ...currentState.levelEntities,
+                defeatedEnemyIds: defeatedIds
+            },
+            levelScore: (currentState.levelScore || 0) + 30
+        });
 
-        // Add +30 points to levelScore using existing rule (GAME_RULES.defeatedEnemyPoints = 30)
-        const scoreState = getGameState();
-        const newLevelScore = (scoreState.levelScore || 0) + 30;
-        updateGameState({ gameState: { ...scoreState, levelScore: newLevelScore } });
-
-        // Update enemy tint to show defeated state
         this.enemies.forEach(enemy => {
             if (enemy.id === enemyId) {
-                enemy.setTint(0x888888);
-                enemy.defeated = true;
+                this.time.delayedCall(0, () => {
+                    if (enemy && enemy.active) {
+                        enemy.visible = false;
+                        if (enemy.body) {
+                            enemy.body.enable = false;
+                        }
+                    }
+                });
             }
         });
+    }
+
+    rescueNpc (npcId)
+    {
+        const currentState = getGameState();
+        const rescuedIds = currentState.levelEntities.rescuedNpcIds;
+        if (!rescuedIds.includes(npcId)) {
+            rescuedIds.push(npcId);
+            updateGameState({
+                levelEntities: {
+                    ...currentState.levelEntities,
+                    rescuedNpcIds: rescuedIds
+                },
+                levelScore: (currentState.levelScore || 0) + 20
+            });
+        }
+    }
+
+updateNpcGraphics ()
+    {
+        const rescuedIds = getGameState().levelEntities.rescuedNpcIds;
+
+        this.npcs.forEach((npc, index) => {
+            const isRescued = rescuedIds.includes(npc.id);
+            const graphic = this.npcGraphics[index];
+
+            this.time.delayedCall(0, () => {
+                if (graphic && graphic.active) {
+                    graphic.clear();
+                    graphic.fillStyle(isRescued ? 0x888888 : 0xffd700, 1);
+                    graphic.fillRect(npc.x - 15, npc.y - 15, 30, 30);
+                }
+            });
+        });
+    }
+
+    handleExitReached ()
+    {
+        const currentState = getGameState();
+        const currentLevel = LEVELS[currentState.levelIndex];
+        
+        const unrescuedNpcs = currentLevel.npcs.filter(npc => 
+            !currentState.levelEntities.rescuedNpcIds.includes(npc.id)
+        );
+        
+        const penalty = unrescuedNpcs.length * 10;
+        const bonus = 50;
+        const netScore = currentState.levelScore + 50 - (unrescuedNpcs.length * 10);
+        
+        updateGameState({ 
+            confirmedScore: currentState.confirmedScore + netScore,
+            levelScore: 0,
+            timeRemaining: 30,
+            lives: 3,
+            levelEntities: { rescuedNpcIds: [], defeatedEnemyIds: [] }
+        });
+
+        if (currentState.levelIndex >= 3) {
+            this.registry.set('finalGameState', getGameState());
+            this.scene.start('Victory');
+        } else {
+            updateGameState({ 
+                levelIndex: currentState.levelIndex + 1 
+            });
+            this.scene.restart();
+        }
+    }
+
+    takeDamage ()
+    {
+        const currentState = getGameState();
+
+        if (currentState.lives <= 1) {
+            this.scene.start('GameOver');
+            return;
+        }
+
+        const result = resolveDamage(currentState);
+        updateGameState(result.gameState);
+
+        if (result.action === 'respawn') {
+            this.player.setPosition(this.playerStart.x, this.playerStart.y);
+            this.playerBody.setVelocity(0, 0);
+        }
+
+        this.updateEnemyGraphics();
     }
 
     updateEnemyGraphics ()
@@ -155,101 +273,45 @@ export class Game extends Scene
         this.enemies.forEach(enemy => {
             const isDefeated = defeatedIds.includes(enemy.id);
 
-            if (isDefeated) {
-                // Mark as defeated with tint
-                enemy.setTint(0x888888);
-            } else {
-                // Mark as active (remove tint, show red)
-                enemy.clearTint();
-            }
-        });
-    }
-
-    takeDamage ()
-    {
-        const currentState = getGameState();
-        const result = resolveDamage(currentState);
-        updateGameState({ gameState: result.gameState });
-
-        if (result.action === 'respawn') {
-            this.player.setPosition(this.playerStart.x, this.playerStart.y);
-            this.player.setVelocity(0, 0);
-        } else if (result.action === 'restart-level') {
-            restartLevelAttempt();
-            this.player.setPosition(this.playerStart.x, this.playerStart.y);
-            this.player.setVelocity(0, 0);
-        }
-
-        // Update enemy graphics to reflect current game state
-        this.updateEnemyGraphics();
-    }
-
-    rescueNpc (npcId)
-    {
-        // Check if NPC already rescued using game state
-        const currentState = getGameState();
-        const rescuedIds = currentState.levelEntities.rescuedNpcIds;
-
-        // Cannot rescue if already rescued
-        if (rescuedIds.includes(npcId)) {
-            return;
-        }
-
-        // Add to rescued IDs
-        rescuedIds.push(npcId);
-        updateGameState({ gameState: { ...currentState, levelEntities: { ...currentState.levelEntities, rescuedNpcIds: rescuedIds } } });
-
-        // Add +20 points to levelScore using existing rules (GAME_RULES.rescuedNpcPoints = 20)
-        const scoreState = getGameState();
-        const newLevelScore = (scoreState.levelScore || 0) + 20;
-        updateGameState({ gameState: { ...scoreState, levelScore: newLevelScore } });
-
-        // Update NPC graphics - mark as rescued
-        this.updateNpcGraphics(npcId);
-    }
-
-    updateNpcGraphics (rescuedId = null)
-    {
-        const rescuedIds = getGameState().levelEntities.rescuedNpcIds;
-
-        this.npcGraphics.forEach((entry, index) => {
-            const npc = this.npcs[index];
-            const isRescued = rescuedIds.includes(npc.id);
-
-            entry.clear();
-
-            if (isRescued) {
-                // Draw as rescued (gray)
-                entry.fillStyle(0x888888, 1);
-                entry.fillRect(npc.x - 15, npc.y - 15, 30, 30);
-            } else {
-                // Draw as normal (gold)
-                entry.fillStyle(0xffd700, 1);
-                entry.fillRect(npc.x - 15, npc.y - 15, 30, 30);
-            }
+            this.time.delayedCall(0, () => {
+                if (enemy && enemy.active) {
+                    if (isDefeated) {
+                        enemy.visible = false;
+                        if (enemy.body) {
+                            enemy.body.enable = false;
+                        }
+                    } else {
+                        enemy.visible = true;
+                        if (enemy.body) {
+                            enemy.body.enable = true;
+                        }
+                    }
+                }
+            });
         });
     }
 
     update ()
     {
-        this.player.setVelocityX(0);
+        if (!this.playerBody) {
+            console.error('ERROR: playerBody is null in update()');
+            return;
+        }
+
+        this.playerBody.setVelocityX(0);
 
         if (this.cursors.left.isDown || this.keyA.isDown) {
-            this.player.setVelocityX(-this.speed);
+            this.playerBody.setVelocityX(-this.speed);
         } else if (this.cursors.right.isDown || this.keyD.isDown) {
-            this.player.setVelocityX(this.speed);
+            this.playerBody.setVelocityX(this.speed);
         }
 
         if (this.spaceKey.isDown && this.spaceJustReleased) {
             this.spaceJustReleased = false;
 
-            if (this.canJump) {
-                this.player.setVelocityY(-300);
-                this.canJump = false;
-                this.canDoubleJump = true;
-            } else if (this.canDoubleJump) {
-                this.player.setVelocityY(-300);
-                this.canDoubleJump = false;
+            if (this.jumpsUsed < 2) {
+                this.playerBody.setVelocityY(-300);
+                this.jumpsUsed++;
             }
         }
 
@@ -257,18 +319,23 @@ export class Game extends Scene
             this.spaceJustReleased = true;
         }
 
-        if (this.player.body.touching.down) {
-            this.canJump = true;
-            this.canDoubleJump = false;
+        const wasOnGround = this.wasOnGround ?? false;
+        const isOnGround = this.playerBody.touching.down;
+        if (isOnGround && !wasOnGround) {
+            this.jumpsUsed = 0;
+        }
+        this.wasOnGround = isOnGround;
+
+        const gs = getGameState();
+        if (gs.timeRemaining <= 0) {
+            this.scene.start('GameOver');
+            return;
         }
 
-        // F key rescue interaction
         if (this.keyF.isDown && this.fJustReleased) {
             this.fJustReleased = false;
 
-            // Check each NPC for rescue
             this.npcs.forEach(npc => {
-                // Simple distance check - if NPC is within ~100 pixels
                 const dx = this.player.x - npc.x;
                 const dy = this.player.y - npc.y;
                 const distance = Math.sqrt(dx * dx + dy * dy);
@@ -283,10 +350,31 @@ export class Game extends Scene
             this.fJustReleased = true;
         }
 
-        // NPC rescue state update graphics
         this.updateNpcGraphics();
-
-        // Enemy graphics update
         this.updateEnemyGraphics();
+
+        if (gs.timeRemaining > 0) {
+            gs.timeRemaining -= 1 / 60;
+            if (gs.timeRemaining < 0) {
+                gs.timeRemaining = 0;
+            }
+            updateGameState({ timeRemaining: gs.timeRemaining });
+        }
+
+        this.updateHUD();
+    }
+
+    updateHUD ()
+    {
+        const gameState = getGameState();
+
+        const seconds = Math.floor(gameState.timeRemaining);
+        this.timerText.setText('Tiempo: ' + seconds);
+
+        this.scoreText.setText('Score: ' + (gameState.levelScore || 0));
+
+        this.livesText.setText('Vidas: ' + (gameState.lives || 0));
+
+        this.levelText.setText('Nivel: ' + (gameState.levelIndex + 1));
     }
 }

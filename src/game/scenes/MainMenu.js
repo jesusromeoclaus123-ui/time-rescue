@@ -23,9 +23,20 @@ export class MainMenu extends Scene
             align: 'center'
         }).setOrigin(0.5);
 
-        this.input.keyboard.once('keydown-SPACE', () => {
+        this.spaceKey = this.input.keyboard.addKey(32);
+        this.spaceJustPressed = false;
+    }
+
+    update ()
+    {
+        if (this.spaceKey.isDown && !this.spaceJustPressed) {
+            this.spaceJustPressed = true;
             startNewGame();
             this.scene.start('Game');
-        });
+        }
+
+        if (!this.spaceKey.isDown) {
+            this.spaceJustPressed = false;
+        }
     }
 }
