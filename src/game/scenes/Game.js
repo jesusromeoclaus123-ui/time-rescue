@@ -20,18 +20,23 @@ export class Game extends Scene
     create ()
     {
         const currentLevel = LEVELS[this.registry.get('currentLevelIndex') || 0];
-        this.cameras.main.setBackgroundColor(0x00ff00);
+
+        // Fondo
+        this.add.image(512, 384, 'fondo').setDisplaySize(1024, 768);
 
         const { playerStart, exit, platforms } = currentLevel;
 
         this.playerStart = playerStart;
 
-        this.player = this.add.rectangle(playerStart.x, playerStart.y, 30, 30, 0x0000ff);
-        this.physics.world.enable(this.player);
+        // Jugador - sprite con cuerpo de colisión separado
+        this.player = this.physics.add.sprite(playerStart.x, playerStart.y, 'protagonista');
         this.playerBody = this.player.body;
         
         if (this.playerBody) {
             this.playerBody.setCollideWorldBounds(true);
+            // Ajustar hitbox si el sprite es más grande que el personaje visual
+            this.playerBody.setSize(30, 30);
+            this.playerBody.setOffset(0, 0);
         }
 
         this.speed = 200;
@@ -42,10 +47,11 @@ export class Game extends Scene
         this.spaceKey = this.input.keyboard.addKey(32);
         this.keyF = this.input.keyboard.addKey(70);
 
+        // Plataformas
         this.groundSprites = [];
         platforms.forEach(plat => {
-            const sprite = this.add.rectangle(plat.x, plat.y, plat.width, plat.height, 0x00ff00);
-            this.physics.world.enable(sprite);
+            const sprite = this.physics.add.sprite(plat.x, plat.y, 'plataforma');
+            sprite.setDisplaySize(plat.width, plat.height);
             if (sprite.body) {
                 sprite.body.allowGravity = false;
                 sprite.body.immovable = true;
@@ -57,24 +63,32 @@ export class Game extends Scene
             this.canDoubleJump = false;
         });
 
+        // NPCs
         const levelNpcs = currentLevel.npcs;
         this.npcs = [];
-        this.npcGraphics = [];
+        this.npcSprites = [];
 
         levelNpcs.forEach(npcData => {
             const rescuedIds = getGameState().levelEntities.rescuedNpcIds;
             const alreadyRescued = rescuedIds.includes(npcData.id);
 
-            const graphic = this.add.graphics();
+            // Usar NPC1 o NPC2 alternando, o según ID
+            const npcTexture = (npcData.id % 2 === 1) ? 'npc1' : 'npc2';
+            
+            const sprite = this.physics.add.sprite(npcData.x, npcData.y, npcTexture);
+            sprite.setDisplaySize(30, 30);
+            if (sprite.body) {
+                sprite.body.allowGravity = false;
+                sprite.body.immovable = true;
+                sprite.body.enable = false; // Solo visual, colisión por distancia
+            }
+            
             if (alreadyRescued) {
-                graphic.fillStyle(0x888888, 1);
-                graphic.fillRect(npcData.x - 15, npcData.y - 15, 30, 30);
-            } else {
-                graphic.fillStyle(0xffd700, 1);
-                graphic.fillRect(npcData.x - 15, npcData.y - 15, 30, 30);
+                sprite.setTint(0x888888);
+                sprite.setAlpha(0.7);
             }
 
-            this.npcGraphics.push(graphic);
+            this.npcSprites.push(sprite);
 
             this.npcs.push({
                 id: npcData.id,
@@ -83,18 +97,26 @@ export class Game extends Scene
             });
         });
 
+        // Enemigos
         const levelEnemies = currentLevel.enemies;
         this.enemies = [];
 
         levelEnemies.forEach(enemyData => {
             const alreadyDefeated = getGameState().levelEntities.defeatedEnemyIds.includes(enemyData.id);
 
-            const enemy = this.add.rectangle(enemyData.x, enemyData.y, 30, 30,
-                alreadyDefeated ? 0x888888 : 0xff0000);
+            const enemy = this.physics.add.sprite(enemyData.x, enemyData.y, 'enemigo');
+            enemy.setDisplaySize(30, 30);
             enemy.defeated = alreadyDefeated;
-            this.physics.world.enable(enemy);
             if (enemy.body) {
                 enemy.body.setCollideWorldBounds(true);
+                enemy.body.setSize(30, 30);
+            }
+
+            if (alreadyDefeated) {
+                enemy.visible = false;
+                if (enemy.body) {
+                    enemy.body.enable = false;
+                }
             }
 
             this.enemies.push(enemy);
@@ -106,8 +128,9 @@ export class Game extends Scene
 
         this.physics.add.collider(this.enemies, this.groundSprites);
 
-        this.exit = this.add.rectangle(currentLevel.exit.x, currentLevel.exit.y, 40, 80, 0xffd700);
-        this.physics.world.enable(this.exit);
+        // Meta/Salida
+        this.exit = this.physics.add.sprite(currentLevel.exit.x, currentLevel.exit.y, 'meta');
+        this.exit.setDisplaySize(40, 80);
         if (this.exit.body) {
             this.exit.body.allowGravity = false;
             this.exit.body.immovable = true;
@@ -194,23 +217,33 @@ export class Game extends Scene
                 levelScore: (currentState.levelScore || 0) + 20
             });
         }
+
+        // Actualizar visual del NPC rescatado
+        const npcIndex = this.npcs.findIndex(n => n.id === npcId);
+        if (npcIndex >= 0 && this.npcSprites[npcIndex]) {
+            const sprite = this.npcSprites[npcIndex];
+            sprite.setTint(0x888888);
+            sprite.setAlpha(0.7);
+        }
     }
 
-updateNpcGraphics ()
+    updateNpcGraphics ()
     {
         const rescuedIds = getGameState().levelEntities.rescuedNpcIds;
 
         this.npcs.forEach((npc, index) => {
             const isRescued = rescuedIds.includes(npc.id);
-            const graphic = this.npcGraphics[index];
+            const sprite = this.npcSprites[index];
 
-            this.time.delayedCall(0, () => {
-                if (graphic && graphic.active) {
-                    graphic.clear();
-                    graphic.fillStyle(isRescued ? 0x888888 : 0xffd700, 1);
-                    graphic.fillRect(npc.x - 15, npc.y - 15, 30, 30);
+            if (sprite && sprite.active) {
+                if (isRescued) {
+                    sprite.setTint(0x888888);
+                    sprite.setAlpha(0.7);
+                } else {
+                    sprite.clearTint();
+                    sprite.setAlpha(1);
                 }
-            });
+            }
         });
     }
 
