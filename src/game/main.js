@@ -4,6 +4,8 @@ import { GameOver } from './scenes/GameOver';
 import { MainMenu } from './scenes/MainMenu';
 import { Preloader } from './scenes/Preloader';
 import { Victory } from './scenes/Victory';
+import { PauseScene } from './scenes/PauseScene';
+import { TutorialScene } from './scenes/TutorialScene';
 import { AUTO, Game, Scale } from 'phaser';
 
 //  Find out more information about the Game Config at:
@@ -31,7 +33,9 @@ const config = {
         MainMenu,
         MainGame,
         GameOver,
-        Victory
+        Victory,
+        PauseScene,
+        TutorialScene
     ]
 };
 

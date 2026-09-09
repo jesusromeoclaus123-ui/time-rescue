@@ -19,7 +19,7 @@ export class Game extends Scene
 
     create ()
     {
-        const currentLevel = LEVELS[this.registry.get('currentLevelIndex') || 0];
+        const currentLevel = LEVELS[getGameState().levelIndex];
 
         // Fondo
         this.add.image(512, 384, 'fondo').setDisplaySize(1024, 768);
@@ -28,15 +28,13 @@ export class Game extends Scene
 
         this.playerStart = playerStart;
 
-        // Jugador - sprite con cuerpo de colisión separado
+        // Jugador
         this.player = this.physics.add.sprite(playerStart.x, playerStart.y, 'protagonista');
+        this.player.setDisplaySize(36, 36);
         this.playerBody = this.player.body;
-        
+
         if (this.playerBody) {
             this.playerBody.setCollideWorldBounds(true);
-            // Ajustar hitbox si el sprite es más grande que el personaje visual
-            this.playerBody.setSize(30, 30);
-            this.playerBody.setOffset(0, 0);
         }
 
         this.speed = 200;
@@ -46,6 +44,8 @@ export class Game extends Scene
         this.keyD = this.input.keyboard.addKey(68);
         this.spaceKey = this.input.keyboard.addKey(32);
         this.keyF = this.input.keyboard.addKey(70);
+        this.escKey = this.input.keyboard.addKey(27);
+        this.escJustReleased = true;
 
         // Plataformas
         this.groundSprites = [];
@@ -72,17 +72,16 @@ export class Game extends Scene
             const rescuedIds = getGameState().levelEntities.rescuedNpcIds;
             const alreadyRescued = rescuedIds.includes(npcData.id);
 
-            // Usar NPC1 o NPC2 alternando, o según ID
             const npcTexture = (npcData.id % 2 === 1) ? 'npc1' : 'npc2';
-            
+
             const sprite = this.physics.add.sprite(npcData.x, npcData.y, npcTexture);
-            sprite.setDisplaySize(30, 30);
+            sprite.setDisplaySize(36, 36);
             if (sprite.body) {
                 sprite.body.allowGravity = false;
                 sprite.body.immovable = true;
-                sprite.body.enable = false; // Solo visual, colisión por distancia
+                sprite.body.enable = false;
             }
-            
+
             if (alreadyRescued) {
                 sprite.setTint(0x888888);
                 sprite.setAlpha(0.7);
@@ -105,11 +104,10 @@ export class Game extends Scene
             const alreadyDefeated = getGameState().levelEntities.defeatedEnemyIds.includes(enemyData.id);
 
             const enemy = this.physics.add.sprite(enemyData.x, enemyData.y, 'enemigo');
-            enemy.setDisplaySize(30, 30);
+            enemy.setDisplaySize(36, 36);
             enemy.defeated = alreadyDefeated;
             if (enemy.body) {
                 enemy.body.setCollideWorldBounds(true);
-                enemy.body.setSize(30, 30);
             }
 
             if (alreadyDefeated) {
@@ -130,7 +128,7 @@ export class Game extends Scene
 
         // Meta/Salida
         this.exit = this.physics.add.sprite(currentLevel.exit.x, currentLevel.exit.y, 'meta');
-        this.exit.setDisplaySize(40, 80);
+        this.exit.setDisplaySize(48, 64);
         if (this.exit.body) {
             this.exit.body.allowGravity = false;
             this.exit.body.immovable = true;
@@ -166,7 +164,9 @@ export class Game extends Scene
             return;
         }
 
-        const isDefeat = this.playerBody.touching.down && this.playerBody.velocityY > 0 && enemy.body.touching.up;
+        const playerBottom = this.playerBody.bottom;
+        const enemyCenterY = enemy.body.center.y;
+        const isDefeat = this.playerBody.velocityY > 0 && playerBottom <= enemyCenterY;
 
         if (isDefeat) {
             this.defeatEnemy(enemy.id);
@@ -331,6 +331,16 @@ export class Game extends Scene
             return;
         }
 
+        if (this.escKey.isDown && this.escJustReleased) {
+            this.escJustReleased = false;
+            this.scene.pause();
+            this.scene.launch('Pause');
+        }
+
+        if (!this.escKey.isDown) {
+            this.escJustReleased = true;
+        }
+
         this.playerBody.setVelocityX(0);
 
         if (this.cursors.left.isDown || this.keyA.isDown) {
@@ -343,7 +353,7 @@ export class Game extends Scene
             this.spaceJustReleased = false;
 
             if (this.jumpsUsed < 2) {
-                this.playerBody.setVelocityY(-300);
+                this.playerBody.setVelocityY(-420);
                 this.jumpsUsed++;
             }
         }
